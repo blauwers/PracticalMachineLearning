@@ -1,0 +1,133 @@
+---
+title: "Practical Machine Learning - Course Project"
+output: html_document
+fig_width: 8
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Executive Summary
+
+Using devices such as JawboneUp, NikeFuelBand, and Fitbitit is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it.
+
+This report examines data from accelerometers on the belt, forearm, arm, and dumbell of 6 research study participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. By exploring the data, we will develop models allowing the prediction of the manner in which exercises are performed.
+
+The training data for this analysis are available here: https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+The test data are available here: https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+More information is available from the website: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+## Load required libraries and set seed
+
+```{r initialize, message = FALSE, warning = FALSE}
+require(caret)
+require(rpart)
+require(rpart.plot)
+require(RColorBrewer)
+require(rattle)
+require(randomForest)
+set.seed(314)
+```
+
+## Load and clense the data
+
+```{r loading}
+options( stringsAsFactors = FALSE )
+
+# read the pml-training data
+pml_training <- read.csv(url("http://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"), na.strings=c("NA","#DIV/0!",""), header=TRUE, as.is = TRUE)
+
+# read the pml-testing data
+pml_testing <- read.csv(url("http://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"), na.strings=c("NA","#DIV/0!",""), header=TRUE, as.is = TRUE)
+
+# Factorize classe since we can't use string as y for most ML
+pml_training$classe <- as.factor(pml_training$classe)
+
+# let's clean the pml-training data, starting with a copy we can work with
+clean_training <- pml_training
+```
+
+### Zap variables not influencing analysis (sequence, user name, and timestamp data)
+```{r irrelevant}
+clean_training <- clean_training[, -(1:5)]
+```
+
+### Remove columns with nearly all more than 95% NAs
+```{r NAs}
+tmp <- sapply(clean_training, function (x) sum(is.na(x))/dim(clean_training)[1])
+clean_training <- clean_training[names(tmp[tmp < .95])]
+rm(tmp)
+```
+
+### Remove Near Zero Variance predictors from training  sets
+```{r nzv}
+tmp <- nearZeroVar(clean_training, saveMetrics = TRUE)
+clean_training <- clean_training[, tmp$nzv == FALSE]
+rm(tmp)
+```
+
+## Partition data into training and testing sets
+```{r dataPart}
+# split training set 80/20
+trainingSet = createDataPartition(clean_training$classe, p = 0.8, list = FALSE)
+local_training = clean_training[trainingSet,]
+local_testing = clean_training[-trainingSet,]
+rm(clean_training)
+```
+
+## Generate Decision Tree ML model
+```{r decisiontree}
+modelDecisionTree <- rpart(classe ~ ., data=local_training, method="class")
+fancyRpartPlot(modelDecisionTree)
+
+# Use the model to generate predictions
+predictionsDecisionTree <- predict(modelDecisionTree, local_testing, type = "class")
+
+# Get confusion Matrix and Statistics
+cmDecisionTree <- confusionMatrix(predictionsDecisionTree, local_testing$classe)
+round( cmDecisionTree$overall, 3 )
+plot(cmDecisionTree$table, col = cmDecisionTree$byClass, main = paste("Decision Tree Confusion Matrix: Accuracy =", round(cmDecisionTree$overall['Accuracy'], 3)))
+```
+
+## Generate Random Forest ML model
+```{r randomforest}
+modelRandomForest <- randomForest(classe ~. , data=local_training)
+plot(modelRandomForest)
+
+predictionsRandomForest <- predict(modelRandomForest, local_testing, type = "class")
+cmRandomForest <- confusionMatrix(predictionsRandomForest, local_testing$classe)
+round( cmRandomForest$overall, 3 )
+plot(cmRandomForest$table, col = cmRandomForest$byClass, main = paste("Random Forest Confusion Matrix: Accuracy =", round(cmRandomForest$overall['Accuracy'], 3)))
+
+# out of sample error
+round( (1 - sum(predictionsRandomForest == local_testing$classe)/length(predictionsRandomForest)) * 100, 3)
+```
+
+## Generate Generalized Boosted Regression ML model
+```{r generalizedboostregression}
+modelGeneralizedBoostRegression <-
+        train(classe ~ ., data=local_training, method = "gbm", verbose = FALSE,
+                 trControl = trainControl(
+                                method = "repeatedcv",
+                                number = 5,
+                                repeats = 1))
+plot(modelGeneralizedBoostRegression, ylim=c(0.9, 1))
+
+predictionsGeneralizedBoostRegression <- predict(modelGeneralizedBoostRegression, newdata=local_testing)
+cmGeneralizedBoostRegression <- confusionMatrix(predictionsGeneralizedBoostRegression, local_testing$classe)
+round( cmGeneralizedBoostRegression$overall, 3 )
+plot(cmGeneralizedBoostRegression$table, col = cmGeneralizedBoostRegression$byClass, main = paste("Generalized Boosted Regression Confusion Matrix: Accuracy =", round(cmGeneralizedBoostRegression$overall['Accuracy'], 3)))
+```
+
+The analysis indicates a `r round(cmDecisionTree$overall['Accuracy'], 3)`% accuracy level for our Decision Tree model, a `r round(cmRandomForest$overall['Accuracy'], 3)`% accuracy level for our Random Forest model, and a `r round(cmGeneralizedBoostRegression$overall['Accuracy'], 3)`% accuracy level for our Generalized Boost Regression model. Based upon the accuracies reported, we will use the Random Forest algorithm to generate the predictions on the test set which has an out of sample error of `r round( (1 - sum(predictionsRandomForest == local_testing$classe)/length(predictionsRandomForest)) * 100, 3)`%.
+
+## Evaluating the model on the test data
+Results omitted per the Coursera Honor Code.
+```{r evaluation}
+predictionsEvaluation <- predict(modelRandomForest, pml_testing, type = "class")
+```
+
+
